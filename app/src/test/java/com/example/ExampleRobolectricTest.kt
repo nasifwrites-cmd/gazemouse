@@ -5,6 +5,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.example.data.models.CalibrationMatrix
 import com.example.data.models.CalibrationPoint
 import com.example.vision.GazeCalibrationEngine
+import com.example.vision.HandFingertipTracker
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -22,6 +23,23 @@ class ExampleRobolectricTest {
     val context = ApplicationProvider.getApplicationContext<Context>()
     val appName = context.getString(R.string.app_name)
     assertEquals("GazeMouse", appName)
+  }
+
+  @Test
+  fun `test fingertip tracker injection and pinch`() {
+    val tracker = HandFingertipTracker()
+    tracker.updateScreenDimensions(1080f, 2400f)
+
+    // Move fingertip
+    tracker.injectFinger(0.3f, 0.4f, isPinching = false)
+    val state = tracker.fingerState.value
+    assertTrue(state.isHandDetected)
+    assertEquals(0.3f, state.primaryTipX, 0.01f)
+    assertEquals(0.4f, state.primaryTipY, 0.01f)
+
+    // Pinch two fingers together
+    tracker.injectFinger(0.3f, 0.4f, isPinching = true)
+    assertTrue("Should detect pinch gesture", tracker.fingerState.value.isPinching)
   }
 
   @Test

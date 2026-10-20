@@ -1,9 +1,10 @@
 {
   "name": "GazeMouse",
-  "description": "On-device eye tracking mouse control with camera gaze grid calibration and acoustic snap click detection.",
+  "description": "On-device fingertip and gaze mouse controller with translucent camera overlay and two-finger pinch click.",
   "requestFramePermissions": [
     "android.permission.CAMERA",
-    "android.permission.RECORD_AUDIO"
+    "android.permission.RECORD_AUDIO",
+    "android.permission.SYSTEM_ALERT_WINDOW"
   ],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"

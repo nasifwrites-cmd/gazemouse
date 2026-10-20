@@ -16,11 +16,13 @@ import com.example.data.models.CalibrationMatrix
 import com.example.data.models.CalibrationPoint
 import com.example.vision.EyeGazeTracker
 import com.example.vision.GazeCalibrationEngine
+import com.example.vision.HandFingertipTracker
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import org.json.JSONObject
@@ -39,9 +41,15 @@ enum class AppScreen {
 }
 
 enum class PlaygroundMode {
+    SCROLL_FEED,
     TARGET_GAME,
     VIRTUAL_KEYPAD,
     EYE_CANVAS
+}
+
+enum class TrackingMode {
+    FINGERTIP_TRACKING,
+    EYE_GAZE_TRACKING
 }
 
 data class TargetBubble(
@@ -67,22 +75,45 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val clickLogDao = db.clickLogDao()
 
     val gazeTracker = EyeGazeTracker()
+    val fingerTracker = HandFingertipTracker()
     val audioDetector = AudioSnapDetector(application)
     val calibrationEngine = GazeCalibrationEngine(gazeTracker)
 
-    // Navigation state
+    // Navigation & Mode State
     private val _currentScreen = MutableStateFlow(AppScreen.PLAYGROUND)
     val currentScreen = _currentScreen.asStateFlow()
 
-    private val _playgroundMode = MutableStateFlow(PlaygroundMode.TARGET_GAME)
+    private val _playgroundMode = MutableStateFlow(PlaygroundMode.SCROLL_FEED)
     val playgroundMode = _playgroundMode.asStateFlow()
+
+    // Tracking mode: Fingertip mouse is default
+    val trackingMode = MutableStateFlow(TrackingMode.FINGERTIP_TRACKING)
+
+    // Camera settings: No face background
+    val showCameraPip = MutableStateFlow(false)
 
     // Permissions state
     val hasCameraPermission = MutableStateFlow(false)
     val hasMicPermission = MutableStateFlow(false)
+    val hasOverlayPermission = MutableStateFlow(false)
+
+    // Scroll stream from fingertip tracker
+    val scrollEvents = fingerTracker.scrollEvents
+
+    // Active Cursor Position depending on tracking mode
+    val cursorPosition = combine(
+        trackingMode,
+        fingerTracker.cursorPosition,
+        gazeTracker.smoothedCursor
+    ) { mode, fingerPos, gazePos ->
+        when (mode) {
+            TrackingMode.FINGERTIP_TRACKING -> fingerPos
+            TrackingMode.EYE_GAZE_TRACKING -> gazePos
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), Pair(540f, 1200f))
 
     // Live streams from tracker & audio
-    val cursorPosition = gazeTracker.smoothedCursor
+    val fingerState = fingerTracker.fingerState
     val rawGaze = gazeTracker.rawGaze
     val eyeFeatures = gazeTracker.eyeFeatures
     val currentDecibel = audioDetector.currentDb
@@ -127,9 +158,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _systemNotice = MutableSharedFlow<String>(extraBufferCapacity = 2)
     val systemNotice = _systemNotice.asSharedFlow()
 
-    // Show/hide floating camera preview
-    val showCameraPip = MutableStateFlow(true)
-
     init {
         // Load active profile from database on startup
         viewModelScope.launch {
@@ -137,6 +165,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (active != null) {
                 val matrix = GazeCalibrationEngine.jsonToMatrix(active.matrixJson)
                 gazeTracker.setCalibrationMatrix(matrix)
+            }
+        }
+
+        // Listen for Two-Finger Pinch Clicks
+        viewModelScope.launch {
+            fingerTracker.pinchClickEvents.collect { (px, py) ->
+                handlePinchClick(px, py)
             }
         }
 
@@ -159,8 +194,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _playgroundMode.value = mode
     }
 
+    fun setTrackingMode(mode: TrackingMode) {
+        trackingMode.value = mode
+        val modeName = if (mode == TrackingMode.FINGERTIP_TRACKING) "Fingertip Tracking" else "Eye Gaze Tracking"
+        _systemNotice.tryEmit("Mode: $modeName")
+    }
+
     fun updateScreenDimensions(width: Float, height: Float) {
         gazeTracker.updateScreenDimensions(width, height)
+        fingerTracker.updateScreenDimensions(width, height)
     }
 
     fun startListeningAudio() {
@@ -177,36 +219,50 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         audioDetector.snapThresholdDb.value = db
     }
 
+    fun setScrollSensitivity(multiplier: Float) {
+        fingerTracker.scrollSensitivity = multiplier
+    }
+
     fun setSmoothing(alpha: Float) {
         gazeTracker.smoothingAlpha = alpha
+        fingerTracker.smoothingAlpha = alpha
     }
 
     fun setSensitivity(x: Float, y: Float) {
         gazeTracker.sensitivityX = x
         gazeTracker.sensitivityY = y
-    }
-
-    fun toggleInvertX() {
-        gazeTracker.invertX = !gazeTracker.invertX
-    }
-
-    fun toggleInvertY() {
-        gazeTracker.invertY = !gazeTracker.invertY
+        fingerTracker.sensitivity = x
     }
 
     /**
-     * Called whenever a sound snap / loud transient click is detected or manually triggered.
+     * Called whenever user brings two fingers together (Pinch gesture).
      */
-    fun handleSnapClick(peakDb: Float = 80f) {
-        val (cursorX, cursorY) = gazeTracker.smoothedCursor.value
-
-        // Trigger visual ripple
+    fun handlePinchClick(cursorX: Float, cursorY: Float) {
         _clickRipple.tryEmit(Pair(cursorX, cursorY))
-
-        // Trigger device vibration
         triggerHaptic()
 
-        // Log to local Room database
+        viewModelScope.launch {
+            clickLogDao.insertLog(
+                ClickLogEntity(
+                    cursorX = cursorX,
+                    cursorY = cursorY,
+                    decibels = 0f,
+                    eventType = "PINCH_CLICK"
+                )
+            )
+        }
+
+        dispatchClickAction(cursorX, cursorY, "✌️ TWO-FINGER PINCH CLICK!")
+    }
+
+    /**
+     * Called whenever an acoustic snap or manual click is triggered.
+     */
+    fun handleSnapClick(peakDb: Float = 80f) {
+        val (cursorX, cursorY) = cursorPosition.value
+        _clickRipple.tryEmit(Pair(cursorX, cursorY))
+        triggerHaptic()
+
         viewModelScope.launch {
             clickLogDao.insertLog(
                 ClickLogEntity(
@@ -218,8 +274,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
 
-        // Interact based on current playground mode
+        dispatchClickAction(cursorX, cursorY, "🫰 SNAP CLICK!")
+    }
+
+    private fun dispatchClickAction(cursorX: Float, cursorY: Float, label: String) {
         when (_playgroundMode.value) {
+            PlaygroundMode.SCROLL_FEED -> {
+                // Handled in UI card/button click
+            }
             PlaygroundMode.TARGET_GAME -> {
                 checkBubbleHit(cursorX, cursorY)
             }
@@ -227,7 +289,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 addCanvasDot(cursorX, cursorY)
             }
             PlaygroundMode.VIRTUAL_KEYPAD -> {
-                // Keypad hits are checked against button bounds in UI
+                // Handled in UI button bounds check
             }
         }
     }
@@ -238,15 +300,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val bubblePxY = bubble.yRatio * gazeTracker.screenHeightPx
         val dist = hypot(cursorX - bubblePxX, cursorY - bubblePxY)
 
-        if (dist <= bubble.radiusPx + 35f) { // Within hit radius + margin
+        if (dist <= bubble.radiusPx + 45f) {
             _gameScore.value += bubble.points + (_gameStreak.value * 25)
             _gameStreak.value += 1
-            _systemNotice.tryEmit("🎯 TARGET HIT! +${bubble.points} pts (Streak: ${_gameStreak.value})")
+            _systemNotice.tryEmit("🎯 HIT! +${bubble.points} pts (Streak: ${_gameStreak.value})")
             spawnNewTargetBubble()
         } else {
-            // Missed target
             _gameStreak.value = 0
-            _systemNotice.tryEmit("Snap at (${cursorX.toInt()}, ${cursorY.toInt()})")
+            _systemNotice.tryEmit("Clicked at (${cursorX.toInt()}, ${cursorY.toInt()})")
         }
     }
 
@@ -305,7 +366,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
             calibrationDao.insertProfile(entity)
             gazeTracker.setCalibrationMatrix(matrix)
-            _systemNotice.tryEmit("Calibration profile '$name' saved successfully!")
+            _systemNotice.tryEmit("Calibration profile saved!")
         }
     }
 
@@ -331,9 +392,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /**
-     * Export all calibration data and session logs as JSON file in app's internal storage.
-     */
     fun exportDataToJson(context: Context): File? {
         return try {
             val root = JSONObject()

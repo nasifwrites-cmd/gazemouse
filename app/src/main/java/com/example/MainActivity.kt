@@ -220,16 +220,16 @@ fun MainContent(viewModel: MainViewModel) {
             title = { Text("How GazeMouse Works") },
             text = {
                 Text(
-                    text = "1. 👁️ Eye Movement as Mouse:\n" +
-                            "The front camera tracks your pupil movements locally without sending any data to the cloud.\n\n" +
-                            "2. 🎯 Grid Calibration:\n" +
-                            "Run the 9-point calibration so GazeMouse maps where you look to screen coordinates accurately.\n\n" +
-                            "3. 🫰 Snap Sound as Click:\n" +
-                            "The microphone detects sudden sharp sound spikes (finger snaps, claps, tongue clicks) and fires a click at the cursor location!\n\n" +
-                            "4. 💾 100% Local Storage:\n" +
-                            "Profiles & click session data are stored locally in Room database and can be exported as JSON.\n\n" +
-                            "5. 📦 GitHub Actions APK:\n" +
-                            "Push this repo to GitHub and download the ready-to-install debug APK directly from the Actions workflow summary!",
+                    text = "1. 👆 Fingertip as Mouse Pointer:\n" +
+                            "Point your fingertip towards the camera — the mouse cursor tracks where your finger moves!\n\n" +
+                            "2. ↕️ Two-Finger Air Scroll:\n" +
+                            "Raise 2 fingers up and move them vertically to scroll feeds, news, and pages up and down smoothly!\n\n" +
+                            "3. ✌️ Two Fingers Together = Click:\n" +
+                            "Pinch your two fingers together to trigger a mouse click at the cursor!\n\n" +
+                            "4. 🫰 Sound Snap Click:\n" +
+                            "Sharp finger snaps or claps also fire instant clicks.\n\n" +
+                            "5. 📱 System Floating Overlay:\n" +
+                            "Enable 'Draw Over Other Apps' in Sound settings to use your fingertip mouse over home screen and other apps!",
                     fontSize = 12.sp,
                     lineHeight = 18.sp
                 )
